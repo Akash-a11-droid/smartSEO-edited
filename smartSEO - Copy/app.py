@@ -7,11 +7,6 @@ from datetime import datetime
 # Add current directory to path so imports work
 sys.path.append(os.path.dirname(__file__))
 
-from ml.keyword_extractor import HybridKeywordExtractor
-from ml.improvement_suggester import ContentImprover
-from ml.intent_classifier import IntentModels
-from ml.ranking_predictor import RankingPredictor
-
 # Page configuration
 st.set_page_config(
     page_title="SmartSEO Analyzer",
@@ -30,6 +25,9 @@ def train_or_load_models(df):
     
     try:
         # Try to load existing models
+        from ml.intent_classifier import IntentModels
+        from ml.ranking_predictor import RankingPredictor
+        
         intent_model = IntentModels.load_model(intent_model_path)
         ranking_model = RankingPredictor.load_model(ranking_model_path)
         st.sidebar.success("✅ Loaded pre-trained models")
@@ -65,8 +63,6 @@ def main():
                                 height=300,
                                 placeholder="Enter your article, blog post, or webpage content...")
         
-    
-            
     else:
         uploaded_file = st.file_uploader("Upload text file", type=['txt', 'md'])
         if uploaded_file:
@@ -86,23 +82,47 @@ def analyze_content(text):
             intent_model, ranking_model = train_or_load_models(df)
             
             # Initialize tools
+            from ml.keyword_extractor import HybridKeywordExtractor
+            from ml.improvement_suggester import ContentImprover
+            
             keyword_extractor = HybridKeywordExtractor()
             improver = ContentImprover(keyword_extractor)
             
-            # Run analysis
-            keywords = keyword_extractor.ensemble_extraction(text, top_k=5)
-            intents = intent_model.predict(text)
-            rank = ranking_model.predict(text)
-            dominant_intent = intents["nb"][0]
-            suggestions = improver.suggest_improvements(text, dominant_intent, rank, keywords)
-            score = improver.get_content_score(text, suggestions)
+            # Run analysis with error handling for each component
+            try:
+                keywords = keyword_extractor.ensemble_extraction(text, top_k=5)
+            except Exception as e:
+                st.warning(f"Keyword extraction failed: {e}")
+                keywords = ["content", "analysis", "seo"]  # Fallback keywords
+            
+            try:
+                intents = intent_model.predict(text)
+                dominant_intent = intents["nb"][0]
+            except Exception as e:
+                st.warning(f"Intent classification failed: {e}")
+                intents = {"nb": ["informational"], "dt": ["informational"]}
+                dominant_intent = "informational"
+            
+            try:
+                rank = ranking_model.predict(text)
+            except Exception as e:
+                st.warning(f"Ranking prediction failed: {e}")
+                rank = [10.0]  # Default ranking score
+            
+            try:
+                suggestions = improver.suggest_improvements(text, dominant_intent, rank, keywords)
+                score = improver.get_content_score(text, suggestions)
+            except Exception as e:
+                st.warning(f"Suggestion generation failed: {e}")
+                suggestions = ["Basic SEO: Ensure content is comprehensive and well-structured."]
+                score = 50
             
             # Display results
             display_results(text, keywords, intents, rank, suggestions, score)
             
         except Exception as e:
             st.error(f"Error during analysis: {str(e)}")
-            st.info("Make sure all required files are in the correct locations")
+            st.info("The system is using fallback methods. Some features may be limited.")
 
 def display_results(text, keywords, intents, rank, suggestions, score):
     # Overview metrics
@@ -121,7 +141,7 @@ def display_results(text, keywords, intents, rank, suggestions, score):
         show_intent_ranking(intents, rank)
     
     with tab4:
-        show_suggestions(suggestions, score)
+        show_suggestions(suggestions, score, text, keywords, intents, rank)  # Fixed: added missing parameters
 
 def show_overview(text, score):
     col1, col2, col3, col4 = st.columns(4)
@@ -148,7 +168,7 @@ def show_overview(text, score):
     
     # Content preview
     with st.expander("📝 Content Preview"):
-        st.text_area("Preview", text[:500] + "..." if len(text) > 500 else text, height=150)
+        st.text_area("Preview", text[:500] + "..." if len(text) > 500 else text, height=150, key="preview_area")
 
 def show_keyword_analysis(keywords):
     st.subheader("Top 5 Keywords")
@@ -200,7 +220,7 @@ def show_intent_ranking(intents, rank):
         
         st.caption("Lower scores indicate better ranking potential")
 
-def show_suggestions(suggestions, score):
+def show_suggestions(suggestions, score, text, keywords, intents, rank):  # Fixed: added missing parameters
     st.subheader("💡 Improvement Suggestions")
     
     if suggestions:
@@ -235,12 +255,11 @@ def show_suggestions(suggestions, score):
         st.metric("Improvement Potential", f"{100-score} points")
     
     # Download results
-    if st.button("📥 Save Analysis Results"):
+    if st.button("📥 Save Analysis Results", key="save_button"):
         save_results(text, keywords, intents, rank, suggestions, score)
 
 def save_results(text, keywords, intents, rank, suggestions, score):
     import json
-    from datetime import datetime
     
     results = {
         "timestamp": datetime.now().isoformat(),
